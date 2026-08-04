@@ -13,6 +13,8 @@ transcript
 vsim.wlf
 modelsim.ini
 *.ucdb
+*.vvp
+build/
 
 # Synthesis outputs
 *.bit
