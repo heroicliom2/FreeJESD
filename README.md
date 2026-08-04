@@ -33,15 +33,16 @@ its header comment for verification status first.
 ## Features
 
 - [ ] JESD204B subclass 0, 1, and 2 support (subclass 1 targeted for v0.1)
-- [ ] Configurable number of lanes (L) and converters (M)
-- [ ] TX and RX link layer state machines
-- [ ] SYSREF handling for deterministic latency (subclass 1)
+- [ ] Configurable number of lanes (L) and converters (M) (single-lane working; multi-lane is Milestone 4)
+- [x] RX link layer state machine, single lane (`link_fsm.sv`: RESET->WAIT_FOR_PHY->CGS->ILAS->SYNCED, with fault re-entry)
+- [ ] TX link layer state machine
+- [ ] SYSREF handling for deterministic latency (subclass 1) (`lmfc_gen.sv` built; SYSREF-driven top-level integration is later)
 - [x] 8B/10B encoding/decoding
-- [ ] ILAS (Initial Lane Alignment Sequence) generation and checking
-- [ ] Synchronization and alignment logic
+- [x] ILAS (Initial Lane Alignment Sequence) generation and checking (RX side; TX-side `link_tx.sv` is Milestone 5)
+- [x] Synchronization and alignment logic (`octet_align.sv`, `elastic_buffer.sv`, single lane)
 - [ ] APB/AXI4-Lite register map for configuration and status (stretch goal, post-v0.1)
-- [x] Simulation testbenches (unit-level infrastructure, codec/scrambler tests,
-      and an independent golden-model TX octet-stream generator for driving/checking the RX core)
+- [x] Simulation testbenches (unit-level infrastructure, codec/scrambler tests, golden-model TX
+      generator, and a full RX-chain integration test driven by the golden model)
 - [ ] FPGA reference designs (Xilinx / Intel)
 
 ## Repository Structure
@@ -52,13 +53,16 @@ FreeJESD/
 │                           # protocol reference, module specs, verification
 │                           # plan, coding guidelines, build roadmap)
 ├── rtl/
-│   └── common/             # Shared modules (jesd_pkg, 8b/10b codec, scrambler/descrambler)
-│                           # tx/ and rx/ link+transport layers land here as milestones complete
+│   └── common/             # Shared modules: jesd_pkg, 8b/10b codec, scrambler/descrambler,
+│                           # single-lane RX link layer (octet_align, link_fsm, ilas_check,
+│                           # elastic_buffer, lmfc_gen, datapath_rx)
+│                           # tx/ and multi-lane rx/ land here as later milestones complete
 ├── tb/
 │   ├── common/             # Shared testbench macros (tb_pkg.sv) + the
 │   │                        # independent golden-model TX octet-stream generator
 │   ├── smoke/              # Toolchain smoke test
-│   └── unit/                # Per-module self-checking testbenches
+│   ├── unit/                # Per-module self-checking testbenches
+│   └── integration/         # Full-chain tests driven by the golden model (e.g. tb_datapath_rx.sv)
 ├── docs/                   # Toolchain status/bug log, agent handoff notes,
 │                           # generated architecture notes
 ├── Makefile                # make test / make test_<name> / make lint / make clean
@@ -91,18 +95,23 @@ version and machine-specific setup notes if you're setting up fresh.
 ## Status
 
 > **Early development, actively built milestone-by-milestone by an AI coding
-> agent.** Milestones 0–2 are implemented and passing under Icarus Verilog:
-> toolchain smoke test, shared package (`jesd_pkg`, including the ILAS
-> config-octet layout), 8b/10b codec, scrambler/descrambler, and an
-> independent golden-model TX octet-stream generator (CGS → 4-multiframe ILAS
-> → scrambled user data) cross-checked against the RTL descrambler. See
+> agent.** Milestones 0–3 are implemented and passing under Icarus Verilog
+> (10 testbenches, `make test`): toolchain smoke test, shared package
+> (`jesd_pkg`, including the ILAS config-octet layout), 8b/10b codec,
+> scrambler/descrambler, an independent golden-model TX octet-stream
+> generator (CGS → 4-multiframe ILAS → scrambled user data), and a
+> single-lane RX link layer (`octet_align`, `link_fsm`, `ilas_check`,
+> `elastic_buffer`, `lmfc_gen`, wired together in `datapath_rx`) — verified
+> end-to-end by driving the real RX chain with the golden model for both
+> unscrambled and scrambled links. See
 > [instructions/06-BUILD-ROADMAP.md](instructions/06-BUILD-ROADMAP.md) for
 > the full milestone list and exit criteria,
 > [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) for a running log of real bugs the
 > testbenches have caught along the way, and
 > [docs/HANDOFF.md](docs/HANDOFF.md) for the living "what a fresh session
-> needs to know before continuing" notes — including a couple of genuine
-> testbench bugs (not just toolchain quirks) that were caught and fixed.
+> needs to know before continuing" notes — including several genuine design
+> bugs (not just toolchain quirks) that full-chain integration testing
+> caught but no individual module's own unit test did.
 > Contributions and feedback are welcome — including on the "AI wrote this"
 > premise itself.
 

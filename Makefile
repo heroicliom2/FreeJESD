@@ -48,6 +48,14 @@ $(eval $(call TEST_RULE,scrambler,rtl/common/jesd_pkg.sv rtl/common/scrambler.sv
 # --- Milestone 2 ---
 $(eval $(call TEST_RULE,golden_model,rtl/common/jesd_pkg.sv rtl/common/scrambler.sv rtl/common/descrambler.sv tb/common/tb_pkg.sv tb/common/jesd_golden_model.sv tb/unit/tb_golden_model.sv))
 
+# --- Milestone 3 ---
+$(eval $(call TEST_RULE,lmfc_gen,tb/common/tb_pkg.sv rtl/common/lmfc_gen.sv tb/unit/tb_lmfc_gen.sv))
+$(eval $(call TEST_RULE,elastic_buffer,tb/common/tb_pkg.sv rtl/common/elastic_buffer.sv tb/unit/tb_elastic_buffer.sv))
+$(eval $(call TEST_RULE,octet_align,rtl/common/jesd_pkg.sv tb/common/tb_pkg.sv rtl/common/octet_align.sv tb/unit/tb_octet_align.sv))
+$(eval $(call TEST_RULE,link_fsm,rtl/common/jesd_pkg.sv tb/common/tb_pkg.sv rtl/common/link_fsm.sv tb/unit/tb_link_fsm.sv))
+$(eval $(call TEST_RULE,ilas_check,rtl/common/jesd_pkg.sv tb/common/tb_pkg.sv rtl/common/ilas_check.sv tb/unit/tb_ilas_check.sv))
+$(eval $(call TEST_RULE,datapath_rx,rtl/common/jesd_pkg.sv rtl/common/scrambler.sv rtl/common/descrambler.sv rtl/common/octet_align.sv rtl/common/link_fsm.sv rtl/common/ilas_check.sv rtl/common/elastic_buffer.sv rtl/common/lmfc_gen.sv rtl/common/datapath_rx.sv tb/common/tb_pkg.sv tb/common/jesd_golden_model.sv tb/integration/tb_datapath_rx.sv))
+
 # --- later milestones append more $(eval $(call TEST_RULE,...)) lines here,
 #     one per tb/unit/tb_*.sv or tb/integration/tb_*.sv, per doc 06 ---
 

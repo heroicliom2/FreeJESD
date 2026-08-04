@@ -33,7 +33,7 @@ are correctly set in the shell — it seems to want a literal `C:\TEMP`
 sometimes regardless. Fix: `mkdir -p /c/TEMP` once per machine. Not a code
 issue, just a one-time local setup step.
 
-## Milestone 0-2 status: all passing (`make test`)
+## Milestone 0-3 status: all passing (`make test`, 10 testbenches)
 
 ```
 $ make test
@@ -42,6 +42,12 @@ TESTBENCH PASSED: tb_smoke
 TESTBENCH PASSED: tb_phy_8b10b
 TESTBENCH PASSED: tb_scrambler
 TESTBENCH PASSED: tb_golden_model
+TESTBENCH PASSED: tb_lmfc_gen
+TESTBENCH PASSED: tb_elastic_buffer
+TESTBENCH PASSED: tb_octet_align
+TESTBENCH PASSED: tb_link_fsm
+TESTBENCH PASSED: tb_ilas_check
+TESTBENCH PASSED: tb_datapath_rx
 All testbenches passed.
 ```
 
@@ -92,6 +98,16 @@ All testbenches passed.
    rebuilding clean repeatedly showed the real, consistent bug. Root-caused
    and fixed by wrapping both arms of the `if`/`else` in explicit
    `begin`/`end`.
+7. **Two real design bugs, Milestone 3**, both caught by `tb_datapath_rx.sv`
+   (the full-chain integration test) and by neither module's own unit test
+   individually — see `docs/HANDOFF.md`'s "Milestone 3 resolution" section
+   for the full explanation: (a) `link_fsm.sv` sampled `ilas_check.sv`'s
+   single-cycle `cfg_valid_o` pulse at the wrong cycle (needed a latch, not
+   a same-cycle read); (b) `datapath_rx.sv`'s octet->word packer ran from
+   reset instead of being gated to the user-data phase only, so ILAS's
+   non-K config octets got fed into the descrambler and corrupted its LFSR
+   state before real user data even began (doc 02 §4: scrambling never
+   applies to CGS/ILAS octets).
 
 "Constant selects in always_* processes are not fully supported" messages
 (prefixed `sorry:`, not `error:`) appear throughout the codec/scrambler
