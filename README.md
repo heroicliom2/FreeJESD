@@ -40,7 +40,8 @@ its header comment for verification status first.
 - [ ] ILAS (Initial Lane Alignment Sequence) generation and checking
 - [ ] Synchronization and alignment logic
 - [ ] APB/AXI4-Lite register map for configuration and status (stretch goal, post-v0.1)
-- [x] Simulation testbenches (unit-level infrastructure + codec/scrambler tests so far)
+- [x] Simulation testbenches (unit-level infrastructure, codec/scrambler tests,
+      and an independent golden-model TX octet-stream generator for driving/checking the RX core)
 - [ ] FPGA reference designs (Xilinx / Intel)
 
 ## Repository Structure
@@ -54,10 +55,12 @@ FreeJESD/
 │   └── common/             # Shared modules (jesd_pkg, 8b/10b codec, scrambler/descrambler)
 │                           # tx/ and rx/ link+transport layers land here as milestones complete
 ├── tb/
-│   ├── common/             # Shared testbench macros (tb_pkg.sv)
+│   ├── common/             # Shared testbench macros (tb_pkg.sv) + the
+│   │                        # independent golden-model TX octet-stream generator
 │   ├── smoke/              # Toolchain smoke test
 │   └── unit/                # Per-module self-checking testbenches
-├── docs/                   # Generated docs: toolchain status, architecture notes
+├── docs/                   # Toolchain status/bug log, agent handoff notes,
+│                           # generated architecture notes
 ├── Makefile                # make test / make test_<name> / make lint / make clean
 └── LICENSE, CONTRIBUTING.md
 ```
@@ -81,20 +84,27 @@ make test_smoke        # run a single testbench, e.g. the toolchain smoke test
 make clean
 ```
 
-See [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) for the exact toolchain version
-this has been verified against on the primary dev machine.
+`iverilog`/`vvp`/`make` are on `PATH` on the primary dev machine already; see
+[docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) for the exact verified toolchain
+version and machine-specific setup notes if you're setting up fresh.
 
 ## Status
 
 > **Early development, actively built milestone-by-milestone by an AI coding
-> agent.** Milestones 0–1 (toolchain smoke test, shared package, 8b/10b
-> codec, scrambler/descrambler) are implemented and passing under Icarus
-> Verilog. See
+> agent.** Milestones 0–2 are implemented and passing under Icarus Verilog:
+> toolchain smoke test, shared package (`jesd_pkg`, including the ILAS
+> config-octet layout), 8b/10b codec, scrambler/descrambler, and an
+> independent golden-model TX octet-stream generator (CGS → 4-multiframe ILAS
+> → scrambled user data) cross-checked against the RTL descrambler. See
 > [instructions/06-BUILD-ROADMAP.md](instructions/06-BUILD-ROADMAP.md) for
-> the full milestone list and exit criteria, and
+> the full milestone list and exit criteria,
 > [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) for a running log of real bugs the
-> testbenches have caught along the way. Contributions and feedback are
-> welcome — including on the "AI wrote this" premise itself.
+> testbenches have caught along the way, and
+> [docs/HANDOFF.md](docs/HANDOFF.md) for the living "what a fresh session
+> needs to know before continuing" notes — including a couple of genuine
+> testbench bugs (not just toolchain quirks) that were caught and fixed.
+> Contributions and feedback are welcome — including on the "AI wrote this"
+> premise itself.
 
 ## Contributing
 
