@@ -13,6 +13,20 @@
 //   `TB_FINISH("tb_name")     at the very end of the main initial block
 //   `TB_WATCHDOG(cycles)      once, at module scope, in parallel with the
 //                             main test process
+//
+// DANGLING-ELSE TRAP: `CHECK expands to its own `if (!(cond)) begin...end`
+// with no `else` of its own. Writing
+//     if (X) `CHECK(a, "...") else `CHECK(b, "...")
+// without explicit begin/end on the outer if/else lets the `else` bind to
+// CHECK's *internal* if instead of the outer one you wrote — silently
+// changes which branch runs, no compile error, no warning. Confirmed the
+// hard way in tb_golden_model.sv (Milestone 2): every `CHECK used as a
+// direct if/else-if/else arm must be wrapped in its own begin/end:
+//     if (X) begin
+//         `CHECK(a, "...")
+//     end else begin
+//         `CHECK(b, "...")
+//     end
 
 `ifndef TB_PKG_SV
 `define TB_PKG_SV

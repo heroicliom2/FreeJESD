@@ -7,26 +7,36 @@ Keep it updated as milestones close — this is not a historical log, it's
 
 ## Status as of 2026-08-04
 
-Milestones 0 and 1 (`instructions/06-BUILD-ROADMAP.md`) are **implemented
-and verified** — `make test` passes end-to-end:
+Milestones 0, 1, and 2 (`instructions/06-BUILD-ROADMAP.md`) are
+**implemented and verified** — `make test` passes end-to-end:
 - `tb_smoke` — toolchain construct smoke test
 - `tb_phy_8b10b` — exhaustive 256-value D-character sweep + 200 random + 5 K-chars
 - `tb_scrambler` — 4000-vector streaming round-trip + K-passthrough check
+- `tb_golden_model` — CGS/ILAS/user-data structural checks, ILAS config-octet
+  pack/unpack + checksum round trip, scrambled payload cross-checked against
+  `rtl/common/descrambler.sv`
 
-Milestone 2 (golden model, `tb/common/jesd_golden_model.sv`) has **not**
-been started. That's the next task.
+Milestone 3 (RX link layer, single lane — `octet_align.sv`, `link_fsm.sv`,
+`ilas_check.sv`, `elastic_buffer.sv`, `lmfc_gen.sv`, `datapath_rx.sv`) has
+**not** been started. That's the next task.
 
 ## Toolchain (fixed, don't re-discover this every session)
 
-- Icarus Verilog 14.0 (devel) at `C:\iverilog\bin`, not on PATH by default.
-- GNU Make 4.4.1 at `C:\msys64\usr\bin\make.exe` (MSYS2), also not on PATH by
-  default, and **separate from Git Bash** (the Bash tool's default shell) —
-  MSYS2's own bash has these on PATH already; Git Bash doesn't.
-- To run anything from the Bash tool in this project:
+- Icarus Verilog 14.0 (devel) at `C:\iverilog\bin`.
+- GNU Make 4.4.1 at `C:\msys64\usr\bin\make.exe` (MSYS2).
+- **Both are permanently on the User `PATH`** as of 2026-08-04 (persistent
+  registry env var, not per-session) — any shell/terminal opened after that
+  date should just have `iverilog`/`vvp`/`make` available directly. If a
+  particular tool session doesn't (e.g. it was already running before the
+  PATH change, or it's a sandboxed/isolated shell), fall back to:
   ```bash
   export PATH="/c/iverilog/bin:/c/msys64/usr/bin:$PATH"
   make test
   ```
+- One-time machine setup gotcha: iverilog can error `Error opening temporary
+  file C:\TEMP\...` even with `$TMP`/`$TEMP` set correctly — fix is
+  `mkdir -p /c/TEMP` once (see docs/TOOLCHAIN.md). Already done on this
+  machine; only matters if working from a different machine/container.
 - Verilator is not installed; `make lint` no-ops cleanly (this is expected,
   not a bug).
 - Full bug log from getting Milestone 0/1 actually running: see
@@ -70,6 +80,25 @@ toward the spec pack's suggestion:
    blocking (`rst_n = ...`) — same NBA-race family as #3.
 5. `"sorry: constant selects in always_* processes..."` messages are
    non-fatal (compile still succeeds, exit 0) — don't try to fix these.
+6. **`` `CHECK `` in an if/else arm without explicit begin/end is a
+   dangling-else trap.** `` `CHECK `` expands to its own `if (!(cond))
+   begin...end` with no `else`. Writing
+   `if (X) \`CHECK(a,"...") else \`CHECK(b,"...")` lets the `else` silently
+   bind to CHECK's *internal* if instead of the outer one — no compile
+   error, no warning, just the wrong branch running (confirmed the hard way
+   in `tb_golden_model.sv`: it made a correctly-generated multiframe-end `A`
+   marker get checked against the *frame*-end `F` condition instead, purely
+   because the `else` attached to the wrong `if`). Always wrap **both** arms
+   in `begin...end` when a `` `CHECK `` is a direct if/else-if/else arm. See
+   `tb_pkg.sv`'s header for the fully-expanded example.
+7. **A same-time-step bug can look nondeterministic if you're not careful
+   while debugging it.** Adding/removing an unrelated `$display` appeared to
+   flip a real bug (#6 above) between pass/fail across a couple of runs
+   while investigating — it wasn't actually nondeterministic (rebuilding
+   from scratch multiple times reproduced the same result every time), the
+   apparent flip was misleading. If a failure seems to depend on debug
+   prints, rebuild clean 2-3 times before trusting either outcome, and look
+   for a structural cause (like #6) rather than assuming a race.
 
 ## The 8b/10b K-character redesign (important for Milestone 3's octet_align.sv)
 
@@ -88,20 +117,40 @@ stream, it must search for *this project's* actual K-symbol values (defined
 in `phy_8b10b_enc.sv`'s `k_symbol_pair` function), not the textbook comma
 sequence from a JESD204B reference or datasheet.
 
-## Milestone 2 starting point
+## Milestone 2 resolution (for Milestone 3 to reuse, don't re-derive)
 
-`instructions/02-PROTOCOL-REFERENCE.md` §3 lists the 14 ILAS
-configuration-octet fields but does not give exact intra-octet bit offsets,
-and explicitly says to cross-check the real JEDEC text rather than trust a
-transcription — which isn't available in this environment. Resolution
-(same pattern as the 8b/10b table): don't block on it. Pick a
-self-consistent, documented bit layout in the golden model / `jesd_pkg.sv`,
-used identically by both the golden model and (later) `ilas_check.sv` /
-`link_tx.sv`, and verify it via the golden model's own pack→unpack→checksum
-round trip in `tb`. `doc 00`'s non-goals already exclude third-party PHY
-interop for v0.1, so bit-exact match to the real JEDEC table isn't required
-for correctness here — only internal TX/RX self-consistency is, and that's
-fully testable locally now that the toolchain works.
+`instructions/02-PROTOCOL-REFERENCE.md` §3's ILAS config-octet bit layout
+ambiguity (no exact intra-octet offsets given, real JEDEC text not
+available in this environment) was resolved by defining a self-consistent,
+documented, project-own layout in `jesd_pkg.sv`
+(`ilas_pack_config`/`ilas_unpack_config`, see that file's header for the
+exact bit table) — NOT the literal JEDEC Table 12 positions. Verified via
+round trip in `tb_golden_model.sv`. Milestone 3's `ilas_check.sv` must call
+`jesd_pkg::ilas_unpack_config` (already written, don't reimplement the
+layout) rather than hand-rolling its own field extraction — that's the
+"single source of truth" doc 03 asks for.
+
+Also reusable from Milestone 2: `tb/common/jesd_golden_model.sv` is exactly
+the TX octet-stream source doc 04 says to drive `datapath_rx`/`link_fsm`
+with directly for Milestone 3's RX testbenches (`tb_datapath_rx.sv` etc.) —
+instantiate it, call `.generate_stream()`, then feed `u_gm.data[]`/`is_k[]`
+(sliced into 32-bit/4-octet words, `ctrl[o]` = `is_k[base+o]`) into the RX
+DUT. Its exposed offsets (`cgs_start`/`cgs_end`, `ilas_start`/`ilas_end`,
+`mf_start[0:3]`/`mf_end[0:3]`, `user_start`/`user_end`) are there precisely
+so an RX testbench can assert the DUT's FSM state transitions against known
+phase boundaries without recomputing them.
+
+## Milestone 3 starting point
+
+Next: `octet_align.sv`, `link_fsm.sv`, `ilas_check.sv`, `elastic_buffer.sv`,
+`lmfc_gen.sv`, `datapath_rx.sv` (doc 03), single lane, driven by the golden
+model. Remember the K-character redesign note above when `octet_align.sv`
+needs to recognize `/K/` (K28.5 / `jesd_pkg::K_K`'s *octet* value is
+unchanged, 8'hBC — only the 10-bit `phy_8b10b` *symbol* encoding changed;
+`octet_align.sv` operates on already-8b10b-decoded octets+is_k per doc 01's
+layering, so this likely doesn't affect it directly, but double check
+against `01-ARCHITECTURE.md`'s block diagram before assuming which layer
+sees raw 10-bit symbols vs decoded octets).
 
 ## Makefile mechanics (for adding new test targets)
 

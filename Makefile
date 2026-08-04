@@ -45,6 +45,9 @@ $(eval $(call TEST_RULE,smoke,tb/common/tb_pkg.sv tb/smoke/tb_smoke.sv))
 $(eval $(call TEST_RULE,8b10b,rtl/common/jesd_pkg.sv rtl/common/phy_8b10b_enc.sv rtl/common/phy_8b10b_dec.sv tb/common/tb_pkg.sv tb/unit/tb_phy_8b10b.sv))
 $(eval $(call TEST_RULE,scrambler,rtl/common/jesd_pkg.sv rtl/common/scrambler.sv rtl/common/descrambler.sv tb/common/tb_pkg.sv tb/unit/tb_scrambler.sv))
 
+# --- Milestone 2 ---
+$(eval $(call TEST_RULE,golden_model,rtl/common/jesd_pkg.sv rtl/common/scrambler.sv rtl/common/descrambler.sv tb/common/tb_pkg.sv tb/common/jesd_golden_model.sv tb/unit/tb_golden_model.sv))
+
 # --- later milestones append more $(eval $(call TEST_RULE,...)) lines here,
 #     one per tb/unit/tb_*.sv or tb/integration/tb_*.sv, per doc 06 ---
 

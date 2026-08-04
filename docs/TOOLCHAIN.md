@@ -10,36 +10,39 @@ $ iverilog -V
 Icarus Verilog version 14.0 (devel) ()
 ```
 
-**Not on `PATH` by default in a fresh shell** — either add `C:\iverilog\bin`
-to `PATH`, or invoke the binaries by full path / prepend it per-session:
-
+**Permanently added to the User `PATH`** (2026-08-04, via
+`[Environment]::SetEnvironmentVariable("PATH", ..., "User")`) — both
+`C:\iverilog\bin` and `C:\msys64\usr\bin` (GNU Make 4.4.1, `make.exe`) are
+in the persistent registry-backed PATH now, so **any new shell/terminal/IDE
+session** (opened after 2026-08-04) has `iverilog`/`vvp`/`make` available
+with no setup. This only affects *new* processes — a shell that was already
+running before the change won't see it until restarted. If a tool session
+in this repo doesn't have them on PATH, it's an old/pre-existing shell; the
+old per-session workaround still works as a fallback:
 ```
 # bash / Git Bash
-export PATH="/c/iverilog/bin:$PATH"
+export PATH="/c/iverilog/bin:/c/msys64/usr/bin:$PATH"
 
 # PowerShell
-$env:PATH = "C:\iverilog\bin;$env:PATH"
+$env:PATH = "C:\iverilog\bin;C:\msys64\usr\bin;$env:PATH"
 ```
 
-`make` itself is **not** installed in this environment (checked, not on
-`PATH`, no `winget`/`choco` available to install it either). The Makefile
-targets are correct and CI-ready wherever GNU Make is available, but in
-*this* dev environment each target's two commands (`iverilog ... -o
-build/<name>.vvp <sources>` then `vvp build/<name>.vvp | tee
-build/<name>.log`) must be run directly — see each target's exact source
-list in `Makefile`.
+**Environment quirk:** iverilog can fail with `Error opening temporary file
+C:\TEMP\ivrlgXXXXX` / `Please check TMP or TMPDIR` even though `$TMP`/`$TEMP`
+are correctly set in the shell — it seems to want a literal `C:\TEMP`
+sometimes regardless. Fix: `mkdir -p /c/TEMP` once per machine. Not a code
+issue, just a one-time local setup step.
 
-## Milestone 0/1 status: all passing
+## Milestone 0-2 status: all passing (`make test`)
 
 ```
-$ iverilog -g2012 -o build/smoke.vvp tb/common/tb_pkg.sv tb/smoke/tb_smoke.sv && vvp build/smoke.vvp
+$ make test
+...
 TESTBENCH PASSED: tb_smoke
-
-$ iverilog -g2012 -o build/8b10b.vvp rtl/common/jesd_pkg.sv rtl/common/phy_8b10b_enc.sv rtl/common/phy_8b10b_dec.sv tb/common/tb_pkg.sv tb/unit/tb_phy_8b10b.sv && vvp build/8b10b.vvp
 TESTBENCH PASSED: tb_phy_8b10b
-
-$ iverilog -g2012 -o build/scrambler.vvp rtl/common/jesd_pkg.sv rtl/common/scrambler.sv rtl/common/descrambler.sv tb/common/tb_pkg.sv tb/unit/tb_scrambler.sv && vvp build/scrambler.vvp
 TESTBENCH PASSED: tb_scrambler
+TESTBENCH PASSED: tb_golden_model
+All testbenches passed.
 ```
 
 ## Real bugs this toolchain caught on first run (kept here for reference —
@@ -74,6 +77,21 @@ TESTBENCH PASSED: tb_scrambler
    K-characters onto a 6-bit prefix unused by any D-character — see
    `phy_8b10b_enc.sv`'s header comment for the full explanation and the
    tradeoff (these are no longer the industry-standard K28.x bit patterns).
+5. **`iverilog -o build/<name>.vvp` fails with a misleading `error: Code
+   generator failure: -1`** (no actual syntax/semantic error reported) if
+   the `build/` output directory doesn't exist yet — it can't write the
+   output file and the resulting error message doesn't say that clearly.
+   Always `mkdir -p build` (or just use `make`, whose `TEST_RULE` already
+   has the `| $(BUILD)` order-only prerequisite) before invoking `iverilog`
+   directly by hand.
+6. **A real testbench logic bug**: `tb_golden_model.sv`'s dangling-else trap
+   with the `` `CHECK `` macro (see `tb_pkg.sv` gotcha #6 in
+   `docs/HANDOFF.md`) — silently checked the wrong condition at ILAS/user-data
+   multiframe boundaries. Looked briefly like nondeterminism while debugging
+   (adding an unrelated `$display` appeared to change the result) but wasn't;
+   rebuilding clean repeatedly showed the real, consistent bug. Root-caused
+   and fixed by wrapping both arms of the `if`/`else` in explicit
+   `begin`/`end`.
 
 "Constant selects in always_* processes are not fully supported" messages
 (prefixed `sorry:`, not `error:`) appear throughout the codec/scrambler
