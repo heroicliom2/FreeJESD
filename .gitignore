@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Simulation outputs
+*.vcd
+*.fst
+*.lxt
+*.ghw
+sim_build/
+work/
+transcript
+vsim.wlf
+modelsim.ini
+*.ucdb
+
+# Synthesis outputs
+*.bit
+*.bin
+*.log
+*.xpr
+*.xsa
+*.mcs
+*.runs/
+*.ip_user_files/
+*.cache/
+*.hw/
+*.sim/
+*.gen/
+*.srcs/impl_*/
+*.srcs/sim_*/
+*.jou
+*.str
+
+# Quartus
+*.qpf
+*.qsf
+db/
+incremental_db/
+output_files/
+*.sof
+*.rbf
+*.pof
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/settings.json
