@@ -33,20 +33,28 @@ its header comment for verification status first.
 ## Features
 
 - [ ] JESD204B subclass 0, 1, and 2 support (subclass 1 targeted for v0.1)
-- [ ] Configurable number of lanes (L) and converters (M) (single-lane working; multi-lane is Milestone 4)
+- [x] Configurable number of lanes (L) and converters (M) — RX side working for L=1/2/4
+      (`jesd204b_rx_top.sv`: per-lane `datapath_rx` + shared `lmfc_gen`/`buffer_release` +
+      `transport_rx`); TX-side multi-lane (`jesd204b_tx_top.sv`) is Milestone 5
 - [x] Configurable internal datapath width — 16/32/64-bit (`DW_OCTETS` = 2/4/8), compile-time
-      parameter threaded through the scrambler/descrambler/elastic buffer/RX datapath, so the
-      core isn't locked to one converter bit width (e.g. 8/16/32-bit ADCs, F constrained to a
-      multiple of the chosen width)
+      parameter threaded through the scrambler/descrambler/elastic buffer/RX datapath/transport
+      layer, so the core isn't locked to one converter bit width (e.g. 8/16/32-bit ADCs, F
+      constrained to a multiple of the chosen width)
 - [x] RX link layer state machine, single lane (`link_fsm.sv`: RESET->WAIT_FOR_PHY->CGS->ILAS->SYNCED, with fault re-entry)
 - [ ] TX link layer state machine
-- [ ] SYSREF handling for deterministic latency (subclass 1) (`lmfc_gen.sv` built; SYSREF-driven top-level integration is later)
+- [x] SYSREF handling for deterministic latency (subclass 1) (`lmfc_gen.sv` + `buffer_release.sv`'s
+      cross-lane, LMFC-aligned one-time release latch, wired into `jesd204b_rx_top.sv`)
 - [x] 8B/10B encoding/decoding
 - [x] ILAS (Initial Lane Alignment Sequence) generation and checking (RX side; TX-side `link_tx.sv` is Milestone 5)
-- [x] Synchronization and alignment logic (`octet_align.sv`, `elastic_buffer.sv`, single lane)
+- [x] Synchronization and alignment logic (`octet_align.sv`, `elastic_buffer.sv`, `buffer_release.sv`
+      cross-lane deskew, verified under injected inter-lane skew)
+- [x] Transport layer: deterministic lane<->converter octet mapping and `/F//A/` alignment-marker
+      stripping (`transport_rx.sv`, doc02 §7's own project-documented convention — see
+      docs/HANDOFF.md, no literal JEDEC mapping table available in this environment)
 - [ ] APB/AXI4-Lite register map for configuration and status (stretch goal, post-v0.1)
 - [x] Simulation testbenches (unit-level infrastructure, codec/scrambler tests, golden-model TX
-      generator, and a full RX-chain integration test driven by the golden model)
+      generator, a full RX-chain integration test driven by the golden model, and a multi-lane
+      link-level integration + deskew test)
 - [ ] FPGA reference designs (Xilinx / Intel)
 
 ## Repository Structure
@@ -59,8 +67,9 @@ FreeJESD/
 ├── rtl/
 │   └── common/             # Shared modules: jesd_pkg, 8b/10b codec, scrambler/descrambler,
 │                           # single-lane RX link layer (octet_align, link_fsm, ilas_check,
-│                           # elastic_buffer, lmfc_gen, datapath_rx)
-│                           # tx/ and multi-lane rx/ land here as later milestones complete
+│                           # elastic_buffer, lmfc_gen, datapath_rx), RX transport layer +
+│                           # multi-lane top (transport_rx, buffer_release, jesd204b_rx_top)
+│                           # tx/ lands here once Milestone 5 completes
 ├── tb/
 │   ├── common/             # Shared testbench macros (tb_pkg.sv) + the
 │   │                        # independent golden-model TX octet-stream generator
@@ -99,16 +108,20 @@ version and machine-specific setup notes if you're setting up fresh.
 ## Status
 
 > **Early development, actively built milestone-by-milestone by an AI coding
-> agent.** Milestones 0–3 are implemented and passing under Icarus Verilog
-> (10 testbenches, `make test`): toolchain smoke test, shared package
+> agent.** Milestones 0–4 are implemented and passing under Icarus Verilog
+> (14 testbenches, `make test`): toolchain smoke test, shared package
 > (`jesd_pkg`, including the ILAS config-octet layout), 8b/10b codec,
 > scrambler/descrambler, an independent golden-model TX octet-stream
-> generator (CGS → 4-multiframe ILAS → scrambled user data), and a
+> generator (CGS → 4-multiframe ILAS → scrambled user data), a
 > single-lane RX link layer (`octet_align`, `link_fsm`, `ilas_check`,
 > `elastic_buffer`, `lmfc_gen`, wired together in `datapath_rx`) — verified
 > end-to-end by driving the real RX chain with the golden model for both
 > unscrambled and scrambled links, at all three supported datapath widths
-> (16/32/64-bit). See
+> (16/32/64-bit) — and the RX transport layer + multi-lane top level
+> (`transport_rx`, `buffer_release`, `jesd204b_rx_top`) — verified for
+> L=1/2/4 lanes x all three datapath widths, plus a dedicated multi-lane
+> deskew test that injects real inter-lane skew and confirms
+> `buffer_release` still waits for every lane before releasing. See
 > [instructions/06-BUILD-ROADMAP.md](instructions/06-BUILD-ROADMAP.md) for
 > the full milestone list and exit criteria,
 > [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) for a running log of real bugs the

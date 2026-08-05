@@ -7,8 +7,14 @@ Keep it updated as milestones close — this is not a historical log, it's
 
 ## Status as of 2026-08-05
 
-Milestones 0-3 (`instructions/06-BUILD-ROADMAP.md`) are **implemented and
-verified** — `make test` passes end-to-end (10 testbenches):
+Milestones 0-4 (`instructions/06-BUILD-ROADMAP.md`) are **implemented and
+verified** — `make test` passes end-to-end (14 testbenches). Milestone 4
+(`buffer_release.sv`, `transport_rx.sv`, `jesd204b_rx_top.sv` for L=1/2/4)
+is documented in its own section below ("Milestone 4 resolution") — read
+that before touching multi-lane or transport-layer code, it resolves two
+real gaps left open after Milestone 3.
+
+Milestones 0-3 testbenches (10 of the 14):
 - `tb_smoke` — toolchain construct smoke test
 - `tb_phy_8b10b` — exhaustive 256-value D-character sweep + 200 random + 5 K-chars
 - `tb_scrambler` — 4000-vector streaming round-trip + K-passthrough check
@@ -25,6 +31,24 @@ verified** — `make test` passes end-to-end (10 testbenches):
 - `tb_datapath_rx` — **the real Milestone 3 integration test**: golden model
   drives the full RX chain end-to-end, all 6 combinations of SCR∈{0,1} x
   DW_OCTETS∈{2,4,8} (16/32/64-bit), in one run
+
+Milestone 4 testbenches (the remaining 4):
+- `tb_buffer_release` — directed test of the cross-lane latch semantics
+  (LANES∈{1,4}): stays 0 until all lanes ready + an lmfc_zero pulse, stays
+  latched across further lmfc_zero pulses, clears immediately on any lane
+  dropping ready, re-arms correctly
+- `tb_transport_rx` — **the real octet<->sample mapping test**: hand-built
+  per-lane octet tables (marker position + expected mapping computed
+  independently of the RTL) sweep L∈{1,2,4} x DW_OCTETS∈{2,4,8}, 9
+  combinations in one run
+- `tb_jesd204b_rx_top` — full link-level integration: L independent golden
+  models drive `jesd204b_rx_top` end-to-end (no injected skew — lockstep
+  smoke test), sweeping the same 9 L x DW_OCTETS combinations, checking
+  fault-free operation and that `transport_rx` actually produces samples
+- `tb_multilane_skew` — **the real Milestone 4 deskew test** (roadmap's
+  explicit exit criterion): lane 1's entire stream delayed 37 cycles behind
+  lane 0, confirms `buffer_release` still waits for both lanes and neither
+  `elastic_buffer` overflows absorbing the skew
 
 Milestone 4 (RX transport layer + multi-lane — `transport_rx.sv`,
 `buffer_release.sv`, extend to `jesd204b_rx_top.sv` for L=2/4) has **not**
@@ -264,28 +288,87 @@ TX source Milestone 4's `tb_transport_rx.sv`/`jesd204b_rx_top.sv` tests
 should keep driving directly — instantiate it, call `.generate_stream()`,
 feed `u_gm.data[]`/`is_k[]` in per the pattern in `tb_datapath_rx.sv`.
 
-## Milestone 4 starting point
+## Milestone 4 resolution (for Milestone 5 to reuse, don't re-derive)
 
-Next: `transport_rx.sv` + `tb_transport_rx.sv` (table-driven octet<->sample
-mapping sweep, doc 02 §7 — flagged as the highest real-world JESD204B bug
-rate area), `buffer_release.sv`, and extending to `jesd204b_rx_top.sv` for
-L=2/L=4. Two things this milestone actually needs to resolve, not defer
-further:
-1. **The `/F//A/` marker-stripping gap.** `elastic_buffer.sv` has no `ctrl`
-   port (doc 03), so the user-data octet stream reaching it still has
-   `/F/`/`/A/` alignment markers interspersed (every F-th octet — with F
-   constrained to be a multiple of `DW_OCTETS`, as it must be per the
-   width-flexibility requirement above, that means literally every packed
-   word contains at least one marker octet whenever F == DW_OCTETS, so
-   "drop words containing a marker" is not viable, see `datapath_rx.sv`'s
-   header). `transport_rx.sv`'s octet<->sample de-interleave logic already
-   has to understand frame structure, so stripping the markers as part of
-   that de-interleave is the natural place — but this hasn't been designed
-   yet, and now needs to work across all of `DW_OCTETS`∈{2,4,8}, not just one.
-2. **`buffer_release.sv`'s actual release semantics** — see the unresolved
-   `release_i` question directly above. Multi-lane deskew is the actual
-   reason this module exists, so this milestone can't punt on it the way
-   `tb_datapath_rx.sv` did.
+Both real gaps flagged after Milestone 3 are now resolved, not deferred:
+
+1. **`buffer_release.sv`'s real release semantics** (see its own header for
+   the full reasoning): `release_o` is a **one-time latch**, not a recurring
+   per-LMFC-period pulse. It sets on the first `lmfc_zero_i` seen while all
+   `lane_ready_i` are 1, then stays 1 (drops immediately if any lane's ready
+   deasserts, re-arms for the next `lmfc_zero_i`). Reading doc 03's
+   "`release_o = &lane_ready_i` qualified by `lmfc_zero_i`" as a *recurring*
+   gate (one read per LMFC period) would force every `elastic_buffer.sv` to
+   be sized for a full multiframe (`F*K/DW_OCTETS` words) just to survive
+   the wait between releases — the "skew tolerance" framing doc 03 actually
+   gives `DEPTH` never intended that. The one-time-latch reading matches
+   what "deterministic latency" is actually about: all lanes *start*
+   emitting deskewed data at the same LMFC-aligned instant; after that,
+   each lane's `elastic_buffer` just drains continuously
+   (`release_i[lane] = release_o && (level_o[lane] > 0)`, same pattern
+   Milestone 3's single-lane `tb_datapath_rx.sv` used as a simplification —
+   now it's the real thing, gated by the real cross-lane condition).
+   **Real consequence surfaced by `tb_jesd204b_rx_top.sv`**: even with this
+   resolution, each lane's `elastic_buffer` still must survive the gap
+   between *that lane* reaching SYNCED and the *next* `lmfc_zero_i` — up to
+   one full LMFC period in the worst case, not just inter-lane skew. Size
+   `ELASTIC_DEPTH` off `F*K/DW_OCTETS`, not just expected skew, in any real
+   instantiation (`jesd204b_rx_top.sv`'s testbenches use `ELASTIC_DEPTH=256`
+   for exactly this reason, at `F*K=256`).
+2. **The `/F//A/` marker-stripping gap**, resolved in `transport_rx.sv`:
+   since doc 02 §2's v0.1 simplification always inserts a marker at every
+   frame's last octet (not just on data repeats), marker position is fully
+   deterministic — strip by counting position (`local_pos == F-1`), not by
+   inspecting content (`elastic_buffer.sv` has no ctrl port, so content-based
+   stripping isn't even possible this far downstream). See
+   `transport_rx.sv`'s header for the full per-lane counter reasoning
+   (why a free-running counter reset only at `rst_n` stays correctly
+   phase-locked, including under lane skew — verified by
+   `tb_multilane_skew.sv`).
+3. **The octet<->sample mapping itself** also has no literal JEDEC table
+   available in this environment (same situation as the ILAS config-octet
+   layout, doc 02 §3) — resolved the same way: a self-consistent, documented,
+   project-own convention (`gidx = local_pos*L + lane`, read
+   converter-major/byte-minor, MSB-first), verified by `tb_transport_rx.sv`'s
+   directed table test rather than trusting an unavailable reference. See
+   `transport_rx.sv`'s header for the exact formula before touching it.
+4. **Deviation from doc 03's port list**: `transport_rx.sv`'s
+   `converter_valid_o` is `[M-1:0]` (one strobe per converter, each pulsing
+   independently as that converter's own latest sample completes), not
+   doc 03's single shared valid — doc 03's single valid only makes sense for
+   S=1 (every converter's one sample/frame completes "together"); for S>1 the
+   converter-major gidx ordering makes different converters' samples
+   complete at genuinely different cycles. See `transport_rx.sv`'s header
+   for the full justification (same spirit as `link_fsm.sv`'s F/K param
+   deviation in Milestone 3).
+5. **Known, documented, NOT resolved**: `transport_rx.sv`'s per-converter
+   byte-write ordering assumes all L lanes' internal word counters stay in
+   lockstep once data is flowing (true in nominal operation — proven fine
+   even under *initial* lane skew by `tb_multilane_skew.sv`, since
+   `buffer_release.sv` only ever starts draining once every lane already has
+   its frame-position-0 word buffered). What's NOT exercised: a lane
+   stalling *after* release has begun (e.g. transient emptiness from
+   residual skew) relative to the others — see `transport_rx.sv`'s header
+   for the exact scenario. Flagged honestly rather than silently assumed
+   away, same practice as every other real gap in this file.
+
+Also reusable: `jesd204b_rx_top.sv`'s per-lane wiring pattern
+(`datapath_rx` → `buffer_release`-gated `release_i` → `transport_rx`) is the
+template Milestone 5's `jesd204b_tx_top.sv` should mirror on the TX side
+(mirrored roles: `link_tx` generates what `datapath_rx` consumes, etc.).
+
+## Milestone 5 starting point
+
+Next per `instructions/06-BUILD-ROADMAP.md`: `transport_tx.sv`, `link_tx.sv`,
+`jesd204b_tx_top.sv`, then `tb_link_tx_rx_loopback.sv` — feed `link_tx`
+straight into this milestone's own `datapath_rx`/`jesd204b_rx_top`, no golden
+model needed on the check side since the already-validated RX core itself is
+now the checker. Per the standing width-flexibility requirement, give every
+new TX module `DW_OCTETS` from the start and sweep {2,4,8} in its
+testbench — don't retrofit later. `link_tx.sv` will need to generate the same
+`/F//A/`-every-frame-boundary pattern `transport_rx.sv` now strips
+positionally (see Milestone 4 resolution item 2 above) — reuse that same
+convention on the TX side rather than inventing a second one.
 
 ## Makefile mechanics (for adding new test targets)
 

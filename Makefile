@@ -56,6 +56,12 @@ $(eval $(call TEST_RULE,link_fsm,rtl/common/jesd_pkg.sv tb/common/tb_pkg.sv rtl/
 $(eval $(call TEST_RULE,ilas_check,rtl/common/jesd_pkg.sv tb/common/tb_pkg.sv rtl/common/ilas_check.sv tb/unit/tb_ilas_check.sv))
 $(eval $(call TEST_RULE,datapath_rx,rtl/common/jesd_pkg.sv rtl/common/scrambler.sv rtl/common/descrambler.sv rtl/common/octet_align.sv rtl/common/link_fsm.sv rtl/common/ilas_check.sv rtl/common/elastic_buffer.sv rtl/common/lmfc_gen.sv rtl/common/datapath_rx.sv tb/common/tb_pkg.sv tb/common/jesd_golden_model.sv tb/integration/tb_datapath_rx.sv))
 
+# --- Milestone 4 ---
+$(eval $(call TEST_RULE,buffer_release,tb/common/tb_pkg.sv rtl/common/buffer_release.sv tb/unit/tb_buffer_release.sv))
+$(eval $(call TEST_RULE,transport_rx,tb/common/tb_pkg.sv rtl/common/transport_rx.sv tb/unit/tb_transport_rx.sv))
+$(eval $(call TEST_RULE,jesd204b_rx_top,rtl/common/jesd_pkg.sv rtl/common/scrambler.sv rtl/common/descrambler.sv rtl/common/octet_align.sv rtl/common/link_fsm.sv rtl/common/ilas_check.sv rtl/common/elastic_buffer.sv rtl/common/lmfc_gen.sv rtl/common/datapath_rx.sv rtl/common/buffer_release.sv rtl/common/transport_rx.sv rtl/common/jesd204b_rx_top.sv tb/common/tb_pkg.sv tb/common/jesd_golden_model.sv tb/integration/tb_jesd204b_rx_top.sv))
+$(eval $(call TEST_RULE,multilane_skew,rtl/common/jesd_pkg.sv rtl/common/scrambler.sv rtl/common/descrambler.sv rtl/common/octet_align.sv rtl/common/link_fsm.sv rtl/common/ilas_check.sv rtl/common/elastic_buffer.sv rtl/common/lmfc_gen.sv rtl/common/datapath_rx.sv rtl/common/buffer_release.sv rtl/common/transport_rx.sv rtl/common/jesd204b_rx_top.sv tb/common/tb_pkg.sv tb/common/jesd_golden_model.sv tb/integration/tb_multilane_skew.sv))
+
 # --- later milestones append more $(eval $(call TEST_RULE,...)) lines here,
 #     one per tb/unit/tb_*.sv or tb/integration/tb_*.sv, per doc 06 ---
 
