@@ -9,17 +9,19 @@
 // Width-mismatch resolution (a real architectural gap in doc 03, not just
 // an implementation choice): octet_align.sv/link_fsm.sv/ilas_check.sv are
 // specified with 1-octet-per-cycle [7:0] ports, but scrambler.sv/
-// descrambler.sv/elastic_buffer.sv (Milestone 1) are 4-octet/32-bit-per-cycle
-// (doc 00/01's stated internal datapath convention). This module bridges
-// the two with a small internal octet->word packer between octet_align and
-// descrambler (see `pack_*` below), gated to run only while `lane_ready_o`
-// (SYNCED) — see the packer's own comment for why continuous packing is
-// wrong (doc 02 §4: scrambling never applies to CGS/ILAS octets, and
-// letting the descrambler process them corrupts its LFSR state before real
-// user data even begins — caught by tb_datapath_rx.sv, not assumed).
-// This assumes CGS length and F*K are multiples of 4 (true for every
-// config this project currently targets, per doc 00's table) — not a
-// general-purpose arbitrary-length packer.
+// descrambler.sv/elastic_buffer.sv (Milestone 1) are DW_OCTETS-octets-per-
+// cycle (doc 00/01's internal datapath convention, generalized to this
+// project's width-flexibility requirement — DW_OCTETS = 2/4/8 for
+// 16/32/64-bit, compile-time only, see scrambler.sv's header). This module
+// bridges the two with a small internal octet->word packer between
+// octet_align and descrambler (see `pack_*` below), gated to run only while
+// `lane_ready_o` (SYNCED) — see the packer's own comment for why continuous
+// packing is wrong (doc 02 §4: scrambling never applies to CGS/ILAS octets,
+// and letting the descrambler process them corrupts its LFSR state before
+// real user data even begins — caught by tb_datapath_rx.sv, not assumed).
+// This assumes CGS length and F are multiples of DW_OCTETS (project
+// convention — see the width-flexibility clarification in
+// docs/HANDOFF.md) — not a general-purpose arbitrary-length packer.
 //
 // buffer_release.sv doesn't exist until Milestone 4 (multi-lane); for this
 // single-lane milestone, `release_i` is accepted directly as an external
@@ -33,6 +35,7 @@
 `timescale 1ns/1ps
 
 module datapath_rx #(
+    parameter int DW_OCTETS = 4, // compile-time datapath width in octets: 2/4/8 = 16/32/64-bit
     // ilas_check expected settings (doc 03)
     parameter int L_EXP  = 1,
     parameter int F_EXP  = 4,
@@ -69,7 +72,7 @@ module datapath_rx #(
     output logic        checksum_err_o,
     output logic        param_mismatch_o,
 
-    output logic [31:0] rd_data_o,        // elastic_buffer output (this lane's descrambled, deskewed data)
+    output logic [DW_OCTETS*8-1:0] rd_data_o, // elastic_buffer output (this lane's descrambled, deskewed data)
     output logic        rd_valid_o,
     output logic [$clog2(ELASTIC_DEPTH):0] level_o,
     output logic        overflow_o,
@@ -85,8 +88,8 @@ module datapath_rx #(
     // (octet_align->link_fsm->ilas_check->descrambler) end-to-end without
     // needing that not-yet-built stripping logic.
     output logic        descr_valid_o,
-    output logic [31:0] descr_data_o,
-    output logic [3:0]  descr_ctrl_o
+    output logic [DW_OCTETS*8-1:0] descr_data_o,
+    output logic [DW_OCTETS-1:0]   descr_ctrl_o
 );
 
     import jesd_pkg::*;
@@ -129,14 +132,16 @@ module datapath_rx #(
     // pack_cnt's mod-4 phase cleanly aligned to the true start of user data,
     // rather than accumulating phase from however many CGS+ILAS octets
     // preceded it.
-    logic [31:0] pack_word;
-    logic [3:0]  pack_ctrl;
-    logic        pack_valid;
-    logic [1:0]  pack_cnt;
+    localparam int PACK_CNT_BITS = (DW_OCTETS > 1) ? $clog2(DW_OCTETS) : 1;
+
+    logic [DW_OCTETS*8-1:0]  pack_word;
+    logic [DW_OCTETS-1:0]    pack_ctrl;
+    logic                    pack_valid;
+    logic [PACK_CNT_BITS-1:0] pack_cnt;
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            pack_cnt   <= 2'd0;
+            pack_cnt   <= '0;
             pack_word  <= '0;
             pack_ctrl  <= '0;
             pack_valid <= 1'b0;
@@ -145,18 +150,18 @@ module datapath_rx #(
             if (oa_valid && lane_ready_o) begin
                 pack_word[8*pack_cnt +: 8] <= oa_data;
                 pack_ctrl[pack_cnt]        <= oa_k;
-                if (pack_cnt == 2'd3)
+                if (pack_cnt == PACK_CNT_BITS'(DW_OCTETS - 1))
                     pack_valid <= 1'b1;
                 pack_cnt <= pack_cnt + 1'b1;
             end
         end
     end
 
-    logic        descr_valid;
-    logic [31:0] descr_data;
-    logic [3:0]  descr_ctrl;
+    logic                   descr_valid;
+    logic [DW_OCTETS*8-1:0] descr_data;
+    logic [DW_OCTETS-1:0]   descr_ctrl;
 
-    descrambler u_descr (
+    descrambler #(.DW_OCTETS(DW_OCTETS)) u_descr (
         .clk(clk), .rst_n(rst_n),
         .valid_i(pack_valid), .data_i(pack_word), .ctrl_i(pack_ctrl), .enable_i(SCR_EXP),
         .valid_o(descr_valid), .data_o(descr_data), .ctrl_o(descr_ctrl)
@@ -166,7 +171,7 @@ module datapath_rx #(
     assign descr_data_o  = descr_data;
     assign descr_ctrl_o  = descr_ctrl;
 
-    elastic_buffer #(.DEPTH(ELASTIC_DEPTH)) u_ebuf (
+    elastic_buffer #(.DW_OCTETS(DW_OCTETS), .DEPTH(ELASTIC_DEPTH)) u_ebuf (
         .clk(clk), .rst_n(rst_n),
         .wr_valid_i(descr_valid), .wr_data_i(descr_data), .lane_ready_i(lane_ready_o),
         .release_i(release_i),

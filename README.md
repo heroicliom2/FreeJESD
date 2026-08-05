@@ -34,6 +34,10 @@ its header comment for verification status first.
 
 - [ ] JESD204B subclass 0, 1, and 2 support (subclass 1 targeted for v0.1)
 - [ ] Configurable number of lanes (L) and converters (M) (single-lane working; multi-lane is Milestone 4)
+- [x] Configurable internal datapath width — 16/32/64-bit (`DW_OCTETS` = 2/4/8), compile-time
+      parameter threaded through the scrambler/descrambler/elastic buffer/RX datapath, so the
+      core isn't locked to one converter bit width (e.g. 8/16/32-bit ADCs, F constrained to a
+      multiple of the chosen width)
 - [x] RX link layer state machine, single lane (`link_fsm.sv`: RESET->WAIT_FOR_PHY->CGS->ILAS->SYNCED, with fault re-entry)
 - [ ] TX link layer state machine
 - [ ] SYSREF handling for deterministic latency (subclass 1) (`lmfc_gen.sv` built; SYSREF-driven top-level integration is later)
@@ -103,7 +107,8 @@ version and machine-specific setup notes if you're setting up fresh.
 > single-lane RX link layer (`octet_align`, `link_fsm`, `ilas_check`,
 > `elastic_buffer`, `lmfc_gen`, wired together in `datapath_rx`) — verified
 > end-to-end by driving the real RX chain with the golden model for both
-> unscrambled and scrambled links. See
+> unscrambled and scrambled links, at all three supported datapath widths
+> (16/32/64-bit). See
 > [instructions/06-BUILD-ROADMAP.md](instructions/06-BUILD-ROADMAP.md) for
 > the full milestone list and exit criteria,
 > [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) for a running log of real bugs the

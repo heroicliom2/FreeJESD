@@ -23,13 +23,49 @@ verified** — `make test` passes end-to-end (10 testbenches):
   tracking, checksum-fail path, alignment-loss fault re-entry
 - `tb_ilas_check` — clean/checksum-fail/param-mismatch captures, observe-only mode
 - `tb_datapath_rx` — **the real Milestone 3 integration test**: golden model
-  drives the full RX chain end-to-end, both SCR=0 and SCR=1, in one run
+  drives the full RX chain end-to-end, all 6 combinations of SCR∈{0,1} x
+  DW_OCTETS∈{2,4,8} (16/32/64-bit), in one run
 
 Milestone 4 (RX transport layer + multi-lane — `transport_rx.sv`,
 `buffer_release.sv`, extend to `jesd204b_rx_top.sv` for L=2/4) has **not**
 been started. That's the next task — see its starting-point section below,
 which covers real unfinished business this milestone deliberately left for
 it (the `/F//A/` marker-stripping gap in particular).
+
+## Standing requirement: configurable datapath width (added 2026-08-05, after Milestone 3)
+
+User requirement, not from the `instructions/` spec pack — confirmed via two
+clarifying questions before implementing, both answered "recommended":
+1. **Datapath width is a compile-time parameter**, `DW_OCTETS` (2/4/8 =
+   16/32/64-bit octets/cycle), threaded through every module that has a
+   multi-octet-wide port — same binding model as every other config in this
+   project (L, F, K, M, SCR...). Not runtime-switchable; changing it means
+   re-elaborating the core, not writing a register.
+2. **F (octets/frame) must be a multiple of `DW_OCTETS`.** Doc 03's F range
+   (1-256) already covers real ADC bit widths (8/16/32-bit converters) —
+   that part needed no change. The width requirement only affects how many
+   octets get packed into one datapath word per cycle; constraining F to a
+   multiple of the chosen width avoids partial-word handling at every frame
+   boundary, which real ADC configs don't typically need anyway.
+
+**Retrofitted** (all re-verified passing, `DW_OCTETS` swept in {2,4,8}
+everywhere it applies): `scrambler.sv`, `descrambler.sv` (data/ctrl ports
+and the `process_block` function's octet loop now scale with `DW_OCTETS`;
+`STATE_WIDTH`/LFSR math unaffected — unrelated to datapath width),
+`elastic_buffer.sv` (word width only; `DEPTH`, entry count, is independent
+of `DW_OCTETS`), `datapath_rx.sv` (packer width + `DW_OCTETS` passed through
+to its `descrambler`/`elastic_buffer` instances). **Not touched, and don't
+need to be**: `octet_align.sv`, `link_fsm.sv`, `ilas_check.sv` — these
+already operate one octet per cycle by design (doc 03's own port widths for
+them), which is inherently width-agnostic; the datapath-width concept only
+exists from the packer boundary onward. `jesd_pkg.sv`, `phy_8b10b_enc/dec.sv`
+are similarly untouched (K-chars and 8b/10b symbols are octet/10-bit-level,
+not datapath-word-level).
+
+If you're touching any module downstream of the packer boundary in a later
+milestone (`transport_rx.sv`, `link_tx.sv`, `transport_tx.sv`, etc.), add
+`DW_OCTETS` to it from the start and sweep {2,4,8} in its testbench — don't
+build it 32-bit-only and retrofit later like this pass had to.
 
 ## Toolchain (fixed, don't re-discover this every session)
 
@@ -200,17 +236,20 @@ suite"):
 **A real architectural gap in doc 03** (not a bug, a genuine spec-pack
 inconsistency): `octet_align.sv`/`link_fsm.sv`/`ilas_check.sv` are specified
 with 1-octet-per-cycle `[7:0]` ports, but `scrambler.sv`/`descrambler.sv`/
-`elastic_buffer.sv` (Milestone 1) are 4-octet/32-bit-per-cycle (doc 00/01's
-stated internal datapath convention). `datapath_rx.sv` bridges this with a
-small internal octet->word packer — see its header comment. This assumes
-CGS length and F*K are multiples of 4 (true for every config doc 00
-targets); not a general-purpose arbitrary-length packer.
+`elastic_buffer.sv` (Milestone 1) are multi-octet-per-cycle (`DW_OCTETS`,
+this project's own width-flexibility requirement as of 2026-08-05 — see
+that section above). `datapath_rx.sv` bridges this with a small internal
+octet->word packer — see its header comment. This assumes F is a multiple
+of `DW_OCTETS` (project convention); not a general-purpose arbitrary-length
+packer. (Earlier note in this file said "F*K multiples of 4" — superseded:
+the packer is gated to SYNCED-only now, so only F, not CGS length or F*K,
+constrains it.)
 
 **`release_i` / `buffer_release.sv` is genuinely unresolved, on purpose.**
 doc 02 §6 describes elastic-buffer release as "gated by the LMFC-zero
 pulse" — read literally (one release per full `F*K`-cycle LMFC period),
 that implies each `elastic_buffer.sv` needs to be deep enough to hold a
-full multiframe (`F*K/4` words), which contradicts doc 03's own framing of
+full multiframe (`F*K/DW_OCTETS` words), which contradicts doc 03's own framing of
 `DEPTH` as sized to *skew tolerance*, not multiframe capacity. For this
 single-lane milestone there's no other lane to deskew against anyway, so
 `tb_datapath_rx.sv` just drives `release_i = lane_ready_o && (level_o > 0)`
@@ -234,13 +273,15 @@ L=2/L=4. Two things this milestone actually needs to resolve, not defer
 further:
 1. **The `/F//A/` marker-stripping gap.** `elastic_buffer.sv` has no `ctrl`
    port (doc 03), so the user-data octet stream reaching it still has
-   `/F/`/`/A/` alignment markers interspersed (every 4th octet, for the
-   doc 00 target F=4 config — meaning literally every packed 32-bit word
-   contains exactly one marker octet, so "drop words containing a marker"
-   is not viable, see `datapath_rx.sv`'s header). `transport_rx.sv`'s
-   octet<->sample de-interleave logic already has to understand frame
-   structure, so stripping the markers as part of that de-interleave is
-   the natural place — but this hasn't been designed yet.
+   `/F/`/`/A/` alignment markers interspersed (every F-th octet — with F
+   constrained to be a multiple of `DW_OCTETS`, as it must be per the
+   width-flexibility requirement above, that means literally every packed
+   word contains at least one marker octet whenever F == DW_OCTETS, so
+   "drop words containing a marker" is not viable, see `datapath_rx.sv`'s
+   header). `transport_rx.sv`'s octet<->sample de-interleave logic already
+   has to understand frame structure, so stripping the markers as part of
+   that de-interleave is the natural place — but this hasn't been designed
+   yet, and now needs to work across all of `DW_OCTETS`∈{2,4,8}, not just one.
 2. **`buffer_release.sv`'s actual release semantics** — see the unresolved
    `release_i` question directly above. Multi-lane deskew is the actual
    reason this module exists, so this milestone can't punt on it the way

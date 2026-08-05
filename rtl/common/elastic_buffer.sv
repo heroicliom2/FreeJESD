@@ -16,19 +16,25 @@
 // below. rd_data_o on a read always reflects the buffer's contents from
 // *before* this cycle's write (standard nonblocking-assignment FIFO
 // semantics, not a special case that needed extra logic).
+//
+// DW_OCTETS: compile-time datapath width in octets (2/4/8 = 16/32/64-bit),
+// this project's width-flexibility requirement — see scrambler.sv's header
+// for the full rationale. Only the data word width scales with it; DEPTH
+// (entry count) is independent.
 
 `timescale 1ns/1ps
 
 module elastic_buffer #(
+    parameter int DW_OCTETS = 4,
     parameter int DEPTH = 8 // power of 2; >= max tolerated inter-lane skew (doc 02 §6)
 ) (
     input  logic        clk,
     input  logic        rst_n,
     input  logic        wr_valid_i,
-    input  logic [31:0] wr_data_i,
+    input  logic [DW_OCTETS*8-1:0] wr_data_i,
     input  logic        lane_ready_i, // from link_fsm; gates write-enable
     input  logic        release_i,    // from shared buffer_release; pops one entry per pulse
-    output logic [31:0] rd_data_o,
+    output logic [DW_OCTETS*8-1:0] rd_data_o,
     output logic        rd_valid_o,
     output logic [$clog2(DEPTH):0] level_o, // fill level, 0..DEPTH inclusive
     output logic        overflow_o,   // hard fault: write attempted while full and no slot freed this cycle
@@ -37,7 +43,7 @@ module elastic_buffer #(
 
     localparam int PTR_BITS = $clog2(DEPTH);
 
-    logic [31:0] mem [0:DEPTH-1];
+    logic [DW_OCTETS*8-1:0] mem [0:DEPTH-1];
     logic [PTR_BITS-1:0]   wr_ptr, rd_ptr;
     logic [PTR_BITS:0]     level;
 

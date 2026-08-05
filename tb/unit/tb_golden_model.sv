@@ -14,6 +14,15 @@
 // golden model's independent bit-serial scrambler against the RTL's
 // unrolled-parallel one without them sharing code, which is exactly the
 // property doc 04 wants from keeping the two implementations separate.
+//
+// The descrambler cross-check is swept across DW_OCTETS in {2,4,8}
+// (16/32/64-bit datapath widths, this project's width-flexibility
+// requirement — see scrambler.sv's header): the golden model itself is
+// octet-granular and width-agnostic, only how the cross-check packs its
+// octet stream into words for feeding the RTL descrambler varies with
+// width. One shared u_gm instance/stream (generated once), one descrambler
+// instance per width, each width's own initial block waits for the shared
+// stream+reset to be ready before running its own check.
 
 `timescale 1ns/1ps
 
@@ -21,7 +30,7 @@ module tb_golden_model;
     import jesd_pkg::*;
 
     integer error_count = 0;
-    `TB_WATCHDOG(2000000)
+    `TB_WATCHDOG(6000000)
 
     localparam int L_CFG  = 1;
     localparam int F_CFG  = 4;
@@ -55,31 +64,85 @@ module tb_golden_model;
     logic [103:0] cfg_extract_packed;
     logic [88:0]  unpacked;
 
-    // --- descrambler cross-check signals ---
-    logic clk, rst_n;
-    logic        d_valid_i, d_enable_i;
-    logic [31:0] d_data_i;
-    logic [3:0]  d_ctrl_i;
-    logic        d_valid_o;
-    logic [31:0] d_data_o;
-    logic [3:0]  d_ctrl_o;
-
-    descrambler u_descr (
-        .clk(clk), .rst_n(rst_n),
-        .valid_i(d_valid_i), .data_i(d_data_i), .ctrl_i(d_ctrl_i), .enable_i(d_enable_i),
-        .valid_o(d_valid_o), .data_o(d_data_o), .ctrl_o(d_ctrl_o)
-    );
-
+    logic clk = 1'b0;
+    logic rst_n;
+    logic ready; // asserted once reset + stream generation + structural checks are done
     always #5 clk = ~clk;
 
-    integer word_idx, n_words, base;
-    logic [7:0] exp_counter;
-    integer exp_word_octet;
+    genvar gw;
+    generate
+        for (gw = 0; gw < 3; gw = gw + 1) begin : g_width
+            localparam int DW = (gw == 0) ? 2 : (gw == 1) ? 4 : 8;
+
+            logic            d_valid_i, d_enable_i;
+            logic [DW*8-1:0] d_data_i;
+            logic [DW-1:0]   d_ctrl_i;
+            logic            d_valid_o;
+            logic [DW*8-1:0] d_data_o;
+            logic [DW-1:0]   d_ctrl_o;
+
+            descrambler #(.DW_OCTETS(DW)) u_descr (
+                .clk(clk), .rst_n(rst_n),
+                .valid_i(d_valid_i), .data_i(d_data_i), .ctrl_i(d_ctrl_i), .enable_i(d_enable_i),
+                .valid_o(d_valid_o), .data_o(d_data_o), .ctrl_o(d_ctrl_o)
+            );
+
+            integer word_idx, n_words, base, w_octet;
+            logic [7:0] exp_counter;
+            logic done;
+
+            initial begin
+                d_valid_i = 1'b0; d_data_i = '0; d_ctrl_i = '0; d_enable_i = 1'b1;
+                done = 1'b0;
+                wait (ready);
+
+                n_words = (u_gm.user_end - u_gm.user_start) / DW;
+                `CHECK(((u_gm.user_end - u_gm.user_start) % DW) == 0,
+                       "user-data length must be a multiple of DW_OCTETS for this cross-check")
+
+                exp_counter = 8'h00;
+                for (word_idx = 0; word_idx < n_words; word_idx = word_idx + 1) begin
+                    base = u_gm.user_start + word_idx * DW;
+                    for (w_octet = 0; w_octet < DW; w_octet = w_octet + 1) begin
+                        d_data_i[8*w_octet +: 8] <= u_gm.data[base + w_octet];
+                        d_ctrl_i[w_octet]        <= u_gm.is_k[base + w_octet];
+                    end
+                    d_valid_i <= 1'b1;
+                    @(posedge clk);
+                    #1;
+                    if (d_valid_o) begin
+                        for (w_octet = 0; w_octet < DW; w_octet = w_octet + 1) begin
+                            if (!d_ctrl_o[w_octet]) begin
+                                `CHECK(((d_data_o >> (8*w_octet)) & 8'hFF) === exp_counter,
+                                       "descrambled user-data payload octet doesn't match expected counter")
+                                exp_counter = exp_counter + 8'd1;
+                            end
+                        end
+                    end
+                end
+                d_valid_i <= 1'b0;
+
+                // drain final pipeline word
+                @(posedge clk);
+                #1;
+                if (d_valid_o) begin
+                    for (w_octet = 0; w_octet < DW; w_octet = w_octet + 1) begin
+                        if (!d_ctrl_o[w_octet]) begin
+                            `CHECK(((d_data_o >> (8*w_octet)) & 8'hFF) === exp_counter,
+                                   "descrambled user-data payload octet doesn't match expected counter (drain)")
+                            exp_counter = exp_counter + 8'd1;
+                        end
+                    end
+                end
+
+                done = 1'b1;
+            end
+        end
+    endgenerate
 
     initial begin
-        clk = 1'b0;
         rst_n = 1'b0;
-        d_valid_i = 1'b0; d_data_i = 32'h0; d_ctrl_i = 4'h0; d_enable_i = 1'b1;
+        ready = 1'b0;
 
         u_gm.generate_stream();
 
@@ -176,50 +239,16 @@ module tb_golden_model;
             end
         end
 
-        // === descramble the user-data phase with the VERIFIED RTL
-        // descrambler and confirm the recovered payload is the expected
-        // free-running counter (skipping K-marked positions, exactly like
-        // the golden model's own generation logic did) ===
+        // Reset+release, then let the per-width cross-check blocks run.
         rst_n <= 1'b0;
         repeat (3) @(posedge clk);
         rst_n <= 1'b1;
         @(posedge clk);
+        ready = 1'b1;
+    end
 
-        n_words = (u_gm.user_end - u_gm.user_start) / 4;
-        `CHECK(((u_gm.user_end - u_gm.user_start) % 4) == 0, "user-data length must be a multiple of 4 for this cross-check")
-
-        exp_counter = 8'h00;
-        for (word_idx = 0; word_idx < n_words; word_idx = word_idx + 1) begin
-            base = u_gm.user_start + word_idx * 4;
-            d_data_i <= {u_gm.data[base+3], u_gm.data[base+2], u_gm.data[base+1], u_gm.data[base+0]};
-            d_ctrl_i <= {u_gm.is_k[base+3], u_gm.is_k[base+2], u_gm.is_k[base+1], u_gm.is_k[base+0]};
-            d_valid_i <= 1'b1;
-            @(posedge clk);
-            #1;
-            if (d_valid_o) begin
-                for (exp_word_octet = 0; exp_word_octet < 4; exp_word_octet = exp_word_octet + 1) begin
-                    if (!d_ctrl_o[exp_word_octet]) begin
-                        `CHECK(((d_data_o >> (8*exp_word_octet)) & 8'hFF) === exp_counter,
-                               "descrambled user-data payload octet doesn't match expected counter")
-                        exp_counter = exp_counter + 8'd1;
-                    end
-                end
-            end
-        end
-        d_valid_i <= 1'b0;
-        // drain final pipeline word
-        @(posedge clk);
-        #1;
-        if (d_valid_o) begin
-            for (exp_word_octet = 0; exp_word_octet < 4; exp_word_octet = exp_word_octet + 1) begin
-                if (!d_ctrl_o[exp_word_octet]) begin
-                    `CHECK(((d_data_o >> (8*exp_word_octet)) & 8'hFF) === exp_counter,
-                           "descrambled user-data payload octet doesn't match expected counter (drain)")
-                    exp_counter = exp_counter + 8'd1;
-                end
-            end
-        end
-
+    initial begin
+        wait (g_width[0].done && g_width[1].done && g_width[2].done);
         `TB_FINISH("tb_golden_model")
     end
 
