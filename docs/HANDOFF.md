@@ -5,6 +5,18 @@ likely with a fresh context window. Read this before touching Milestone 2+.
 Keep it updated as milestones close — this is not a historical log, it's
 "what you need to know right now."
 
+## CI note (2026-08-06): tried and removed, don't re-add without asking
+
+A `.github/workflows/ci.yml` (`make test`/`make lint` on Ubuntu via
+apt-installed `iverilog`/`verilator`, triggered on push/PR) was added, then
+fully **removed** at the user's request after its first automatic run showed
+up as billed Actions usage — unexpected on a repo the user believed was
+public (public repos get unlimited/free minutes on standard GitHub-hosted
+runners; this was never actually confirmed as a real charge vs. a misread
+billing page before the user asked to just remove it). No CI workflow exists
+in this repo currently — don't re-add one speculatively; if a future session
+or the user wants CI back, that's a fresh decision, not a default to restore.
+
 ## Status as of 2026-08-05
 
 Milestones 0-4 (`instructions/06-BUILD-ROADMAP.md`) are **implemented and

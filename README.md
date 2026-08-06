@@ -1,7 +1,5 @@
 # FreeJESD
 
-[![CI](https://github.com/heroicliom2/FreeJESD/actions/workflows/ci.yml/badge.svg)](https://github.com/heroicliom2/FreeJESD/actions/workflows/ci.yml)
-
 An open-source implementation of the **JESD204B** high-speed serial interface standard, written in synthesizable RTL (SystemVerilog/Verilog).
 
 ## Overview
